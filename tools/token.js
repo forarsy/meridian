@@ -85,11 +85,64 @@ export async function getTokenHolders({ mint, limit = 20 }) {
   const realHolders = mapped.filter((h) => !h.is_pool);
   const top10Pct = realHolders.slice(0, 10).reduce((s, h) => s + (Number(h.pct) || 0), 0);
 
+  // ─── Bundler Detection ────────────────────────────────────────
+  // common_funder: 2+ wallets funded by same address
+  const funderGroups = {};
+  for (const h of realHolders) {
+    if (h.funding?.address) {
+      (funderGroups[h.funding.address] ||= []).push(h.address);
+    }
+  }
+  const commonFunderSet = new Set(
+    Object.values(funderGroups).filter((g) => g.length >= 2).flat()
+  );
+
+  // funded_same_window: funded within ±5000 slots of any other holder
+  const SLOT_WINDOW = 5000;
+  const withSlots = realHolders.filter((h) => h.funding?.slot);
+  const sorted = [...withSlots].sort((a, b) => a.funding.slot - b.funding.slot);
+  const sameWindowSet = new Set();
+  for (let i = 0; i < sorted.length; i++) {
+    for (let j = i + 1; j < sorted.length; j++) {
+      if (sorted[j].funding.slot - sorted[i].funding.slot <= SLOT_WINDOW) {
+        sameWindowSet.add(sorted[i].address);
+        sameWindowSet.add(sorted[j].address);
+      } else break;
+    }
+  }
+
+  // similar_amount: token balance within 10% of any other real holder
+  const similarAmountSet = new Set();
+  for (let i = 0; i < realHolders.length; i++) {
+    for (let j = i + 1; j < realHolders.length; j++) {
+      const a = Number(realHolders[i].amount);
+      const b = Number(realHolders[j].amount);
+      if (a > 0 && b > 0 && Math.abs(a - b) / Math.max(a, b) <= 0.1) {
+        similarAmountSet.add(realHolders[i].address);
+        similarAmountSet.add(realHolders[j].address);
+      }
+    }
+  }
+
+  const bundlers = realHolders
+    .map((h) => {
+      const reasons = [];
+      if (commonFunderSet.has(h.address)) reasons.push("common_funder");
+      if (sameWindowSet.has(h.address)) reasons.push("funded_same_window");
+      if (similarAmountSet.has(h.address)) reasons.push("similar_amount");
+      return reasons.length ? { address: h.address, balance: h.amount, percentage: h.pct, reasons, slot: h.funding?.slot } : null;
+    })
+    .filter(Boolean);
+
+  const totalBundlersPct = bundlers.reduce((s, b) => s + (Number(b.percentage) || 0), 0);
+
   return {
     mint,
     total_fetched: holders.length,
     showing: mapped.length,
     top_10_real_holders_pct: top10Pct.toFixed(2),
+    total_bundlers_pct: totalBundlersPct.toFixed(4),
+    bundlers,
     holders: mapped,
   };
 }
