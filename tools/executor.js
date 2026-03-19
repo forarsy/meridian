@@ -166,9 +166,15 @@ const toolMap = {
     const applied = {};
     const unknown = [];
 
+    // Build case-insensitive lookup
+    const CONFIG_MAP_LOWER = Object.fromEntries(
+      Object.entries(CONFIG_MAP).map(([k, v]) => [k.toLowerCase(), [k, v]])
+    );
+
     for (const [key, val] of Object.entries(changes)) {
-      if (!CONFIG_MAP[key]) { unknown.push(key); continue; }
-      applied[key] = val;
+      const match = CONFIG_MAP[key] ? [key, CONFIG_MAP[key]] : CONFIG_MAP_LOWER[key.toLowerCase()];
+      if (!match) { unknown.push(key); continue; }
+      applied[match[0]] = val;
     }
 
     if (Object.keys(applied).length === 0) {
