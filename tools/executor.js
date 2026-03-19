@@ -120,7 +120,7 @@ const toolMap = {
     }
     return { error: "invalid mode" };
   },
-  update_config: ({ changes, reason }) => {
+  update_config: ({ changes, reason = "" }) => {
     // Flat key → config section mapping (covers everything in config.js)
     const CONFIG_MAP = {
       // screening

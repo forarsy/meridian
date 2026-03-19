@@ -376,7 +376,7 @@ Examples:
 - { managementModel: "openrouter/healer-alpha" }  — switch management cycle model
 - { screeningModel: "openrouter/healer-alpha" }   — switch screening cycle model
 
-Always provide a reason. This is logged as a lesson and visible in future cycles.`,
+Reason is optional but helpful — logged as a lesson when provided.`,
       parameters: {
         type: "object",
         properties: {
@@ -389,7 +389,7 @@ Always provide a reason. This is logged as a lesson and visible in future cycles
             description: "Why you are making this change — what you observed that justified it"
           }
         },
-        required: ["changes", "reason"]
+        required: ["changes"]
       }
     }
   },
