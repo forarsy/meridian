@@ -24,7 +24,7 @@ const DEFAULT_MODEL = process.env.LLM_MODEL || "openrouter/healer-alpha";
  * @param {number} maxSteps - Safety limit on iterations (default 20)
  * @returns {string} - The agent's final text response
  */
-export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHistory = [], agentType = "GENERAL", model = null) {
+export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHistory = [], agentType = "GENERAL", model = null, maxOutputTokens = null) {
   // Build dynamic system prompt with current portfolio state
   const [portfolio, positions] = await Promise.all([getWalletBalances(), getMyPositions()]);
   const stateSummary = getStateSummary();
@@ -55,7 +55,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           tools,
           tool_choice: "auto",
           temperature: config.llm.temperature,
-          max_tokens: config.llm.maxTokens,
+          max_tokens: maxOutputTokens ?? config.llm.maxTokens,
         });
         if (response.choices?.length) break;
         const errCode = response.error?.code;

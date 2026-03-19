@@ -3,7 +3,7 @@ import cron from "node-cron";
 import readline from "readline";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
-import { getMyPositions } from "./tools/dlmm.js";
+import { getMyPositions, getPositionPnl } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
@@ -14,6 +14,8 @@ import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool } from "./pool-memory.js";
+import { checkSmartWalletsOnPool } from "./smart-wallets.js";
+import { getTokenHolders, getTokenNarrative } from "./tools/token.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -102,45 +104,62 @@ function startCronJobs() {
     timers.managementLastRun = Date.now();
     log("cron", `Starting management cycle [model: ${config.llm.managementModel}]`);
     let mgmtReport = null;
+    let positions = [];
     try {
-      // Snapshot all open positions into pool-memory for trend tracking
+      // Pre-load all positions + PnL in parallel — LLM gets everything, no fetch steps needed
       const livePositions = await getMyPositions().catch(() => null);
-      const memoryContext = [];
-      for (const p of livePositions?.positions || []) {
-        recordPositionSnapshot(p.pool, p);
-        const recall = recallForPool(p.pool);
-        if (recall) memoryContext.push(recall);
+      positions = livePositions?.positions || [];
+
+      if (positions.length === 0) {
+        log("cron", "Management skipped — no open positions");
+        return;
       }
 
-      const { content } = await agentLoop(`
-MANAGEMENT CYCLE
-${memoryContext.length > 0 ? `\nPOOL CONTEXT (from memory):\n${memoryContext.join("\n")}\n` : ""}
+      // Snapshot + PnL fetch in parallel for all positions
+      const positionData = await Promise.all(positions.map(async (p) => {
+        recordPositionSnapshot(p.pool, p);
+        const pnl = await getPositionPnl({ pool_address: p.pool, position_address: p.position }).catch(() => null);
+        const recall = recallForPool(p.pool);
+        return { ...p, pnl, recall };
+      }));
 
-HARD CLOSE RULES — check in order, first match closes immediately, no further analysis:
-1. Position has an instruction AND condition is met → CLOSE (user override, highest priority)
-2. Position has an instruction AND condition is NOT met → HOLD, ignore all rules below
-3. pnl_pct <= ${config.management.emergencyPriceDropPct}% → CLOSE (emergency stop loss)
+      // Build pre-loaded position blocks for the LLM
+      const positionBlocks = positionData.map((p) => {
+        const pnl = p.pnl;
+        const lines = [
+          `POSITION: ${p.pair} (${p.position})`,
+          `  pool: ${p.pool}`,
+          `  age: ${p.age_minutes ?? "?"}m | in_range: ${p.in_range} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
+          pnl ? `  pnl_pct: ${pnl.pnl_pct}% | pnl_usd: $${pnl.pnl_usd} | fees: $${pnl.unclaimed_fee_usd} | value: $${pnl.current_value_usd}` : `  pnl: fetch failed`,
+          p.instruction ? `  instruction: "${p.instruction}"` : null,
+          p.recall ? `  memory: ${p.recall}` : null,
+        ].filter(Boolean);
+        return lines.join("\n");
+      }).join("\n\n");
+
+      const { content } = await agentLoop(`
+MANAGEMENT CYCLE — ${positions.length} position(s)
+
+PRE-LOADED POSITION DATA (no fetching needed):
+${positionBlocks}
+
+HARD CLOSE RULES — apply in order, first match wins:
+1. instruction set AND condition met → CLOSE (highest priority)
+2. instruction set AND condition NOT met → HOLD, skip remaining rules
+3. pnl_pct <= ${config.management.emergencyPriceDropPct}% → CLOSE (stop loss)
 4. pnl_pct >= ${config.management.takeProfitFeePct}% → CLOSE (take profit)
-5. minutes_out_of_range >= ${config.management.outOfRangeWaitMinutes}min → CLOSE (OOR timeout)
-6. fee_active_tvl_ratio < ${config.screening.minFeeActiveTvlRatio}% AND volume < $${config.screening.minVolume} → CLOSE (yield dead)
+5. oor_minutes >= ${config.management.outOfRangeWaitMinutes} → CLOSE (OOR timeout)
+6. fee_active_tvl_ratio < ${config.screening.minFeeActiveTvlRatio} AND volume < $${config.screening.minVolume} → CLOSE (yield dead)
 
 STEPS:
-1. get_my_positions — check all open positions.
-2. For each position:
-   - Call get_position_pnl.
-   - Apply HARD CLOSE RULES above in order. First match → close, stop checking.
-   - If no rule triggers: HOLD. Do not close for any other reason.
-3. If closing: swap base tokens to SOL immediately after.
-4. After any close — recalibrate management interval (MANDATORY):
-   - No positions remaining → update_config management.managementIntervalMin = 10
-   - Positions still open → keep current interval
+1. Apply rules to each position above. No fetching needed — data is pre-loaded.
+2. For any CLOSE: call close_position, then swap base tokens to SOL.
+3. After all closes: if no positions remain, update_config managementIntervalMin=10.
 
-REPORT FORMAT (Strictly follow this for each position):
+REPORT FORMAT (one per position):
 **[PAIR]** | Age: [X]m | Fees: $[X] | PnL: [X]%
-**Rule triggered:** [rule number or "none"]
-**Decision:** [STAY/CLOSE]
-**Reason:** [1 short sentence]
-      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel);
+**Rule:** [number or "none"] | **Decision:** STAY/CLOSE | **Reason:** [1 sentence]
+      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 1024);
       mgmtReport = content;
     } catch (error) {
       log("cron_error", `Management cycle failed: ${error.message}`);
@@ -149,8 +168,7 @@ REPORT FORMAT (Strictly follow this for each position):
       _managementBusy = false;
       if (telegramEnabled()) {
         if (mgmtReport) sendMessage(`🔄 Management Cycle\n\n${mgmtReport}`).catch(() => {});
-        const pos = await getMyPositions().catch(() => null);
-        for (const p of pos?.positions || []) {
+        for (const p of positions) {
           if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
             notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => {});
           }
@@ -163,14 +181,15 @@ REPORT FORMAT (Strictly follow this for each position):
     if (_screeningBusy) return;
 
     // Hard guards — don't even run the agent if preconditions aren't met
+    let prePositions, preBalance;
     try {
-      const [positions, balance] = await Promise.all([getMyPositions(), getWalletBalances()]);
-      if (positions.total_positions >= config.risk.maxPositions) {
-        log("cron", `Screening skipped — max positions reached (${positions.total_positions}/${config.risk.maxPositions})`);
+      [prePositions, preBalance] = await Promise.all([getMyPositions(), getWalletBalances()]);
+      if (prePositions.total_positions >= config.risk.maxPositions) {
+        log("cron", `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`);
         return;
       }
-      if (balance.sol < config.management.minSolToOpen) {
-        log("cron", `Screening skipped — insufficient SOL (${balance.sol.toFixed(3)} < ${config.management.minSolToOpen})`);
+      if (preBalance.sol < config.management.minSolToOpen) {
+        log("cron", `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${config.management.minSolToOpen})`);
         return;
       }
     } catch (e) {
@@ -183,57 +202,72 @@ REPORT FORMAT (Strictly follow this for each position):
     log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
     let screenReport = null;
     try {
-      // Compute dynamic deploy amount based on current wallet (compounding)
-      const currentBalance = await getWalletBalances().catch(() => null);
-      const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : config.management.deployAmountSol;
-      log("cron", `Computed deploy amount: ${deployAmount} SOL (wallet: ${currentBalance?.sol ?? "?"} SOL)`);
+      // Reuse pre-fetched balance — no extra RPC call needed
+      const currentBalance = preBalance;
+      const deployAmount = computeDeployAmount(currentBalance.sol);
+      log("cron", `Computed deploy amount: ${deployAmount} SOL (wallet: ${currentBalance.sol} SOL)`);
 
       // Load active strategy
       const activeStrategy = getActiveStrategy();
-      const strategyBlock = activeStrategy ? `
-ACTIVE STRATEGY: ${activeStrategy.name} (by ${activeStrategy.author})
-Apply these criteria during token selection and deployment:
-- LP Type: ${activeStrategy.lp_strategy}
-- Token: ${JSON.stringify(activeStrategy.token_criteria)}
-- Entry: ${JSON.stringify(activeStrategy.entry)}
-- Range: ${JSON.stringify(activeStrategy.range)}
-- Exit: ${JSON.stringify(activeStrategy.exit)}
-- Best for: ${activeStrategy.best_for}
-Deviate from this strategy only if the token clearly doesn't match — explain why in your report.
-` : `No active strategy set — use default bid_ask with standard settings.`;
+      const strategyBlock = activeStrategy
+        ? `ACTIVE STRATEGY: ${activeStrategy.name} — LP: ${activeStrategy.lp_strategy}, best for: ${activeStrategy.best_for}`
+        : `No active strategy — use default bid_ask.`;
 
-      // Pre-load pool memory for top candidates to inject into screening goal
+      // Pre-load top candidates + all recon data in parallel (saves 4-6 LLM steps)
       const topCandidates = await getTopCandidates({ limit: 5 }).catch(() => null);
-      const candidateMemory = [];
-      for (const pool of topCandidates?.pools || []) {
-        const recall = recallForPool(pool.pool);
-        if (recall) candidateMemory.push(recall);
-      }
+      const candidates = topCandidates?.candidates || topCandidates?.pools || [];
+
+      const candidateBlocks = await Promise.all(
+        candidates.slice(0, 3).map(async (pool) => {
+          const mint = pool.base?.mint;
+          const [smartWallets, holders, narrative, poolMemory] = await Promise.allSettled([
+            checkSmartWalletsOnPool({ pool_address: pool.pool }),
+            mint ? getTokenHolders({ mint, limit: 10 }) : Promise.resolve(null),
+            mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
+            Promise.resolve(recallForPool(pool.pool)),
+          ]);
+
+          const sw    = smartWallets.status === "fulfilled" ? smartWallets.value : null;
+          const h     = holders.status === "fulfilled" ? holders.value : null;
+          const n     = narrative.status === "fulfilled" ? narrative.value : null;
+          const mem   = poolMemory.value;
+
+          // Build compact block
+          const lines = [
+            `POOL: ${pool.name} (${pool.pool})`,
+            `  metrics: bin_step=${pool.bin_step}, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, organic=${pool.organic_score}`,
+            `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
+            h ? `  holders: top_10_pct=${h.top_10_real_holders_pct ?? "?"}%, bundlers_pct=${h.bundlers_pct_in_top_100 ?? "?"}%, global_fees_sol=${h.global_fees_sol ?? "?"}` : `  holders: fetch failed`,
+            n?.narrative ? `  narrative: ${n.narrative.slice(0, 120)}` : `  narrative: none`,
+            mem ? `  memory: ${mem}` : null,
+          ].filter(Boolean);
+
+          return lines.join("\n");
+        })
+      );
+
+      const candidateContext = candidateBlocks.length > 0
+        ? `\nPRE-LOADED CANDIDATE ANALYSIS (smart wallets, holders, narrative already fetched):\n${candidateBlocks.join("\n\n")}\n`
+        : "";
 
       const { content } = await agentLoop(`
 SCREENING CYCLE — DEPLOY ONLY
 ${strategyBlock}
-${candidateMemory.length > 0 ? `\nPOOL MEMORY (pre-loaded for top candidates):\n${candidateMemory.join("\n")}\n` : ""}
-1. get_my_positions first. Only proceed if positions < ${config.risk.maxPositions}.
-2. get_wallet_balance. Proceed if SOL >= ${config.management.minSolToOpen}.
-3. get_top_candidates, pick the best one, and call study_top_lpers.
-4. Pool memory is already injected above — use it to skip pools with bad track records. Still call get_pool_memory for full history if needed.
-5. Call check_smart_wallets_on_pool for the chosen pool.
-   - Smart wallets present → strong confidence boost, proceed to deploy.
-   - For ALL pools (smart wallets or not): call get_token_holders (base mint) and check global_fees_sol.
-     * global_fees_sol = total priority/jito tips paid by ALL traders on this token — NOT Meteora LP fees, do not confuse them.
-     * HARD SKIP if global_fees_sol < ${config.screening.minTokenFeesSol} SOL — low fees = bundled txs or scam token, no exceptions.
-   - No smart wallets → ALSO call get_token_narrative before deciding:
-     * SKIP if: top_10_real_holders_pct > 60% OR bundlers_pct_in_top_100 > 30% OR narrative is empty/null OR narrative is pure hype with no specific story
-     * CAUTION (check organic score + buy/sell pressure before deciding) if: bundlers_pct 15–30% AND top_10 > 40%
-     * DEPLOY if: global_fees_sol >= ${config.screening.minTokenFeesSol}, distribution is healthy AND narrative has a specific origin
-     * Bundlers 5–15% are normal and not a reason to skip on their own — weigh against overall token health
-     * Report global_fees_sol, holder check, and narrative outcome in your reasoning.
-6. If the pool passes all checks: get_active_bin and deploy_position with ${deployAmount} SOL.
-   COMPOUNDING: This amount is scaled from your current wallet (${currentBalance?.sol ?? "?"} SOL).
-   As profits accumulate and wallet grows, deploy amount increases automatically. Do NOT override with a smaller amount.
-7. Report result and reasoning including smart wallet signal, holder check outcome, deploy amount used, and interval set.
-      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
+Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
+${candidateContext}
+DECISION RULES (apply to the pre-loaded candidates above, no re-fetching needed):
+- HARD SKIP if global_fees_sol < ${config.screening.minTokenFeesSol} SOL (bundled/scam)
+- HARD SKIP if top_10_pct > 60% OR bundlers_pct > 30%
+- SKIP if narrative is empty/null or pure hype with no specific story (unless smart wallets present)
+- Bundlers 5–15% are normal, not a skip reason on their own
+- Smart wallets present → strong confidence boost
+
+STEPS:
+1. Pick the best candidate from the pre-loaded analysis above. If none pass, report why and stop.
+2. deploy_position directly — it fetches the active bin internally, no separate get_active_bin needed.
+   Use ${deployAmount} SOL. Do NOT use a smaller amount — this is compounded from your ${currentBalance.sol.toFixed(3)} SOL wallet.
+3. Report: pool chosen, key signals, deploy outcome.
+      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 1024);
       screenReport = content;
     } catch (error) {
       log("cron_error", `Screening cycle failed: ${error.message}`);
