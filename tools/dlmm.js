@@ -608,39 +608,46 @@ export async function closePosition({ position_address }) {
         minutesOOR = Math.floor((Date.now() - new Date(tracked.out_of_range_since).getTime()) / 60000);
       }
 
-      // Snapshot PnL from cache BEFORE invalidating — this was the last known state before close
+      _positionsCacheAt = 0; // invalidate cache so next cycle re-fetches
+
+      // Fetch closed PnL from API — authoritative source after withdrawal settles
       let pnlUsd = 0;
       let pnlPct = 0;
       let finalValueUsd = 0;
+      let initialUsd = 0;
       let feesUsd = tracked.total_fees_claimed_usd || 0;
-      const cachedPos = _positionsCache?.positions?.find(p => p.position === position_address);
-      if (cachedPos) {
-        pnlUsd        = cachedPos.pnl_usd   ?? 0;
-        pnlPct        = cachedPos.pnl_pct   ?? 0;
-        finalValueUsd = cachedPos.total_value_usd ?? 0;
-        feesUsd       = (cachedPos.collected_fees_usd || 0) + (cachedPos.unclaimed_fees_usd || 0);
-      }
-
-      _positionsCacheAt = 0; // invalidate cache after snapshotting PnL
-
-      // If cached PnL looks like bad data (final value 0 but we deposited SOL),
-      // wait 5s for the API to settle then try to re-fetch final value
-      if (finalValueUsd === 0 && (tracked.amount_sol ?? 0) > 0) {
-        try {
-          await new Promise(r => setTimeout(r, 5000));
-          const pnlData = await fetchDlmmPnlForPool(poolAddress, walletAddress);
-          const posEntry = pnlData?.[position_address];
+      try {
+        const closedUrl = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${walletAddress}&status=closed&pageSize=50&page=1`;
+        const res = await fetch(closedUrl);
+        if (res.ok) {
+          const data = await res.json();
+          const posEntry = (data.positions || []).find(p => p.positionAddress === position_address);
           if (posEntry) {
-            finalValueUsd = parseFloat(posEntry.balances || posEntry.balancesSol || 0);
-            feesUsd = parseFloat(posEntry.totalFees || posEntry.totalFeesSol || 0) || feesUsd;
-            log("close", `Re-fetched final value after settle: $${finalValueUsd}`);
+            pnlUsd        = parseFloat(posEntry.pnlUsd || 0);
+            pnlPct        = parseFloat(posEntry.pnlPctChange || 0);
+            finalValueUsd = parseFloat(posEntry.allTimeWithdrawals?.total?.usd || 0);
+            initialUsd    = parseFloat(posEntry.allTimeDeposits?.total?.usd || 0);
+            feesUsd       = parseFloat(posEntry.allTimeFees?.total?.usd || 0) || feesUsd;
+            log("close", `Closed PnL from API: pnl=${pnlUsd.toFixed(2)} USD (${pnlPct.toFixed(2)}%), withdrawn=${finalValueUsd.toFixed(2)}, deposited=${initialUsd.toFixed(2)}`);
+          } else {
+            log("close_warn", `Position not found in status=closed response — may still be settling`);
           }
-        } catch (e) {
-          log("close_warn", `Re-fetch after close failed: ${e.message} — using cached value`);
+        }
+      } catch (e) {
+        log("close_warn", `Closed PnL fetch failed: ${e.message}`);
+      }
+      // Fallback to pre-close cache snapshot if closed API had no data
+      if (finalValueUsd === 0) {
+        const cachedPos = _positionsCache?.positions?.find(p => p.position === position_address);
+        if (cachedPos) {
+          pnlUsd        = cachedPos.pnl_usd   ?? 0;
+          pnlPct        = cachedPos.pnl_pct   ?? 0;
+          finalValueUsd = cachedPos.total_value_usd ?? 0;
+          feesUsd       = (cachedPos.collected_fees_usd || 0) + (cachedPos.unclaimed_fees_usd || 0);
+          initialUsd    = tracked.initial_value_usd || (finalValueUsd - pnlUsd) || 0;
+          log("close_warn", `Using pre-close cache snapshot as fallback`);
         }
       }
-      // Derive initial value from final - pnl if not tracked (most positions don't set initial_value_usd at deploy)
-      const initialUsd = tracked.initial_value_usd || (finalValueUsd - pnlUsd) || 0;
 
       await recordPerformance({
         position: position_address,
