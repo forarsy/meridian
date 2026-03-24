@@ -624,6 +624,23 @@ export async function closePosition({ position_address }) {
       }
 
       _positionsCacheAt = 0; // invalidate cache after snapshotting PnL
+
+      // If cached PnL looks like bad data (final value 0 but we deposited SOL),
+      // wait 5s for the API to settle then try to re-fetch final value
+      if (finalValueUsd === 0 && (tracked.amount_sol ?? 0) > 0) {
+        try {
+          await new Promise(r => setTimeout(r, 5000));
+          const pnlData = await fetchDlmmPnlForPool(poolAddress, walletAddress);
+          const posEntry = pnlData?.[position_address];
+          if (posEntry) {
+            finalValueUsd = parseFloat(posEntry.balances || posEntry.balancesSol || 0);
+            feesUsd = parseFloat(posEntry.totalFees || posEntry.totalFeesSol || 0) || feesUsd;
+            log("close", `Re-fetched final value after settle: $${finalValueUsd}`);
+          }
+        } catch (e) {
+          log("close_warn", `Re-fetch after close failed: ${e.message} — using cached value`);
+        }
+      }
       const initialUsd = tracked.initial_value_usd || 0;
 
       await recordPerformance({
