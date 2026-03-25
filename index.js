@@ -255,7 +255,7 @@ MANAGEMENT ACTION REQUIRED — ${actionPositions.length} position(s)
 ${actionBlocks}
 
 RULES:
-- CLOSE: call close_position with position address + reason
+- CLOSE: call close_position only — it handles fee claiming internally, do NOT call claim_fees first
 - CLAIM: call claim_fees with position address
 - INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
 - ⚡ exit alerts: close immediately, no exceptions
