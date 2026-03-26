@@ -140,6 +140,8 @@ const toolMap = {
       minTokenFeesSol: ["screening", "minTokenFeesSol"],
       maxBundlersPct: ["screening", "maxBundlersPct"],
       maxTop10Pct: ["screening", "maxTop10Pct"],
+      minTokenAgeHours: ["screening", "minTokenAgeHours"],
+      maxTokenAgeHours: ["screening", "maxTokenAgeHours"],
       minFeePerTvl24h: ["management", "minFeePerTvl24h"],
       // management
       minClaimAmount: ["management", "minClaimAmount"],

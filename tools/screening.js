@@ -82,8 +82,22 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const occupiedPools = new Set(positions.map((p) => p.pool));
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
 
+  const { minTokenAgeHours, maxTokenAgeHours } = config.screening;
+
   const eligible = pools
-    .filter((p) => !occupiedPools.has(p.pool) && !occupiedMints.has(p.base?.mint))
+    .filter((p) => {
+      if (occupiedPools.has(p.pool) || occupiedMints.has(p.base?.mint)) return false;
+      const age = p.token_age_hours;
+      if (minTokenAgeHours != null && (age == null || age < minTokenAgeHours)) {
+        log("screening", `Filtered ${p.name}: token too new (${age}h < min ${minTokenAgeHours}h)`);
+        return false;
+      }
+      if (maxTokenAgeHours != null && (age == null || age > maxTokenAgeHours)) {
+        log("screening", `Filtered ${p.name}: token too old (${age}h > max ${maxTokenAgeHours}h)`);
+        return false;
+      }
+      return true;
+    })
     .slice(0, limit);
 
   return {
@@ -156,6 +170,9 @@ function condensePool(p) {
     holders: p.base_token_holders,
     mcap: round(p.token_x?.market_cap),
     organic_score: Math.round(p.token_x?.organic_score || 0),
+    token_age_hours: p.token_x?.created_at
+      ? Math.floor((Date.now() - p.token_x.created_at) / 3_600_000)
+      : null,
 
     // Position health
     active_positions: p.active_positions,

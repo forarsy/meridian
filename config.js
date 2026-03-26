@@ -39,7 +39,9 @@ export const config = {
     minTokenFeesSol:   u.minTokenFeesSol   ?? 30,  // global fees paid (priority+jito tips). below = bundled/scam
     maxBundlersPct:    u.maxBundlersPct    ?? 30,  // max bot/bundler holders % (from Jupiter audit)
     maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
-    blockedLaunchpads: u.blockedLaunchpads ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
+    blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
+    minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
+    maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
   },
 
   // ─── Position Management ────────────────
