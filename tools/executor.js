@@ -144,6 +144,8 @@ const toolMap = {
       timeframe: ["screening", "timeframe"],
       category: ["screening", "category"],
       minTokenFeesSol: ["screening", "minTokenFeesSol"],
+      avoidPvpSymbols: ["screening", "avoidPvpSymbols"],
+      blockPvpSymbols: ["screening", "blockPvpSymbols"],
       maxBundlePct:     ["screening", "maxBundlePct"],
       maxBotHoldersPct: ["screening", "maxBotHoldersPct"],
       maxTop10Pct: ["screening", "maxTop10Pct"],

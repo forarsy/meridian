@@ -213,6 +213,13 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
   if (config.screening.avoidPvpSymbols && eligible.length > 0) {
     await enrichPvpRisk(eligible);
+    if (config.screening.blockPvpSymbols) {
+      const before = eligible.length;
+      eligible.splice(0, eligible.length, ...eligible.filter((p) => !p.is_pvp));
+      if (eligible.length < before) {
+        log("screening", `PVP hard filter removed ${before - eligible.length} pool(s)`);
+      }
+    }
   }
 
   // Enrich with OKX data — advanced info (risk/bundle/sniper) + ATH price (no API key required)

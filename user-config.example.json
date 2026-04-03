@@ -31,6 +31,8 @@
   "maxBinStep": 125,
   "minFeeActiveTvlRatio": 0.05,
   "minTokenFeesSol": 30,
+  "avoidPvpSymbols": true,
+  "blockPvpSymbols": false,
   "maxBundlePct": 30,
   "maxBotHoldersPct": 30,
   "maxTop10Pct": 60,
