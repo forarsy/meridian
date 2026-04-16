@@ -145,6 +145,8 @@ const toolMap = {
       maxBundlePct:     ["screening", "maxBundlePct"],
       maxBotHoldersPct: ["screening", "maxBotHoldersPct"],
       maxTop10Pct: ["screening", "maxTop10Pct"],
+      minVolatility: ["screening", "minVolatility"],
+      maxVolatility: ["screening", "maxVolatility"],
       minTokenAgeHours: ["screening", "minTokenAgeHours"],
       maxTokenAgeHours: ["screening", "maxTokenAgeHours"],
       athFilterPct:     ["screening", "athFilterPct"],
@@ -158,6 +160,7 @@ const toolMap = {
       oorCooldownHours: ["management", "oorCooldownHours"],
       minVolumeToRebalance: ["management", "minVolumeToRebalance"],
       stopLossPct: ["management", "stopLossPct"],
+      emergencyPriceDropPct: ["management", "emergencyPriceDropPct"],
       takeProfitFeePct: ["management", "takeProfitFeePct"],
       trailingTakeProfit: ["management", "trailingTakeProfit"],
       trailingTriggerPct: ["management", "trailingTriggerPct"],
@@ -307,6 +310,21 @@ export async function executeTool(name, args) {
           const poolAddr = result.pool || args.pool_address;
           if (poolAddr) addPoolNote({ pool_address: poolAddr, note: `Closed: low yield (fee/TVL below threshold) at ${new Date().toISOString().slice(0,10)}` }).catch?.(() => {});
         }
+        // Auto-blacklist token on stop loss or emergency close
+        if (args.reason && /stop.?loss|emergency|price.?drop/i.test(args.reason)) {
+          const mint = result.base_mint;
+          const symbol = result.base_symbol || "UNKNOWN";
+          if (mint) {
+            try {
+              const blacklistResult = addToBlacklist({ mint, symbol, reason: `Auto-blacklisted: stop loss/emergency close — ${args.reason} at ${new Date().toISOString()}` });
+              log("blacklist", `Auto-blacklisted ${symbol || mint.slice(0, 8)}: ${args.reason}`);
+              result.auto_blacklisted = true;
+              result.auto_blacklist_note = `Token auto-blacklisted (${symbol || mint.slice(0, 8)}). Will not be considered for future deployments.`;
+            } catch (e) {
+              log("blacklist_warn", `Failed to auto-blacklist ${mint?.slice(0, 8)}: ${e.message}`);
+            }
+          }
+        }
         // Auto-swap base token back to SOL unless user said to hold
         if (!args.skip_swap && result.base_mint) {
           try {
@@ -401,6 +419,17 @@ async function runSafetyChecks(name, args) {
           return {
             pass: false,
             reason: `Already holding base token ${args.base_mint} in another pool. One position per token only.`,
+          };
+        }
+
+        // Deploy limit check — auto-blacklist when limit reached
+        const { canDeployByMint } = await import("../token-blacklist.js");
+        const deployCheck = canDeployByMint(args.base_mint, args.base_symbol);
+        if (!deployCheck.allowed) {
+          return {
+            pass: false,
+            reason: deployCheck.reason,
+            auto_blacklisted: true,
           };
         }
       }

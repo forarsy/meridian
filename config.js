@@ -41,7 +41,9 @@ export const config = {
     minTokenFeesSol:   u.minTokenFeesSol   ?? 30,  // global fees paid (priority+jito tips). below = bundled/scam
     maxBundlePct:      u.maxBundlePct      ?? 30,  // max bundle holding % (OKX advanced-info)
     maxBotHoldersPct:  u.maxBotHoldersPct  ?? 30,  // max bot holder addresses % (Jupiter audit)
-    maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
+    maxTop10Pct:       u.maxTop10Pct       ?? 30,  // max top 10 holders concentration
+    minVolatility:     u.minVolatility     ?? null,  // null = no minimum volatility filter
+    maxVolatility:     u.maxVolatility     ?? null,  // null = no maximum volatility filter
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
@@ -57,7 +59,8 @@ export const config = {
     oorCooldownTriggerCount: u.oorCooldownTriggerCount ?? 3,
     oorCooldownHours:       u.oorCooldownHours       ?? 12,
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
-    stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
+    stopLossPct:           u.stopLossPct           ?? -8,
+    emergencyPriceDropPct: u.emergencyPriceDropPct ?? -25,
     takeProfitFeePct:      u.takeProfitFeePct      ?? 5,
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close
@@ -155,5 +158,7 @@ export function reloadScreeningThresholds() {
     if (fresh.athFilterPct      !== undefined) s.athFilterPct     = fresh.athFilterPct;
     if (fresh.maxBundlePct      != null) s.maxBundlePct     = fresh.maxBundlePct;
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
+    if (fresh.minVolatility     !== undefined) s.minVolatility = fresh.minVolatility;
+    if (fresh.maxVolatility     !== undefined) s.maxVolatility = fresh.maxVolatility;
   } catch { /* ignore */ }
 }

@@ -16,6 +16,7 @@ Pools are pre-filtered for safety:
 - Active TVL >= $10k
 - Fee/Active TVL ratio >= 0.01 (in timeframe)
 - Both tokens organic score >= 60
+- Volatility within configured min/max range (if set)
 
 Returns condensed pool data: address, name, tokens, bin_step, fee_pct,
 active_tvl, fee_window, volume_window, fee_tvl_ratio, volatility, organic_score,
@@ -372,8 +373,8 @@ WARNING: This executes a real on-chain transaction.`,
 Changes persist to user-config.json and take effect immediately — no restart needed.
 
 VALID KEYS (use EXACTLY these key names, nothing else):
-Screening: minFeeActiveTvlRatio, minTvl, maxTvl, minVolume, minOrganic, minHolders, minMcap, maxMcap, minBinStep, maxBinStep, timeframe, category, minTokenFeesSol
-Management: minClaimAmount, outOfRangeBinsToClose, outOfRangeWaitMinutes, minVolumeToRebalance, stopLossPct, takeProfitFeePct, minSolToOpen, deployAmountSol, gasReserve, positionSizePct
+Screening: minFeeActiveTvlRatio, minTvl, maxTvl, minVolume, minOrganic, minHolders, minMcap, maxMcap, minBinStep, maxBinStep, timeframe, category, minTokenFeesSol, minVolatility, maxVolatility, maxBundlePct, maxBotHoldersPct, maxTop10Pct, minTokenAgeHours, maxTokenAgeHours, athFilterPct
+Management: minClaimAmount, outOfRangeBinsToClose, outOfRangeWaitMinutes, oorCooldownTriggerCount, oorCooldownHours, minVolumeToRebalance, stopLossPct, emergencyPriceDropPct, takeProfitFeePct, minFeePerTvl24h, minAgeBeforeYieldCheck, minSolToOpen, deployAmountSol, gasReserve, positionSizePct, trailingTakeProfit, trailingTriggerPct, trailingDropPct, pnlSanityMaxDiffPct, solMode
 Risk: maxPositions, maxDeployAmount
 Schedule: managementIntervalMin, screeningIntervalMin
 Models: managementModel, screeningModel, generalModel

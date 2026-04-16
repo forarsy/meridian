@@ -643,9 +643,12 @@ export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
   const data = load();
   const p = data.performance;
 
-  if (p.length === 0) return { positions: [], count: 0, hours };
+  if (p.length === 0) return { positions: [], count: 0, hours: hours ?? 24 };
 
-  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  // hours: null or 0 → return all records (no time filter)
+  const cutoff = (hours && hours > 0)
+    ? new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
+    : "1970-01-01T00:00:00.000Z";
 
   const filtered = p
     .filter((r) => r.recorded_at >= cutoff)

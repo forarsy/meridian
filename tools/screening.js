@@ -227,6 +227,28 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       return true;
     }));
 
+    // Volatility filter — skip pools outside min/max volatility range
+    const minVol = config.screening.minVolatility;
+    const maxVol = config.screening.maxVolatility;
+    if (minVol != null || maxVol != null) {
+      const before = eligible.length;
+      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+        if (p.volatility == null) return true; // no data → don't filter
+        if (minVol != null && p.volatility < minVol) {
+          log("screening", `Volatility filter: dropped ${p.name} — vol ${p.volatility} < ${minVol} min`);
+          pushFilteredReason(filteredOut, p, `volatility ${p.volatility} below min ${minVol}`);
+          return false;
+        }
+        if (maxVol != null && p.volatility > maxVol) {
+          log("screening", `Volatility filter: dropped ${p.name} — vol ${p.volatility} > ${maxVol} max`);
+          pushFilteredReason(filteredOut, p, `volatility ${p.volatility} above max ${maxVol}`);
+          return false;
+        }
+        return true;
+      }));
+      if (eligible.length < before) log("screening", `Volatility filter removed ${before - eligible.length} pool(s)`);
+    }
+
     // ATH filter — drop pools where price is too close to ATH
     const athFilter = config.screening.athFilterPct;
     if (athFilter != null) {

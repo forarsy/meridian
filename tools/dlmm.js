@@ -916,6 +916,7 @@ export async function closePosition({ position_address, reason }) {
         minutes_in_range: minutesHeld - minutesOOR,
         minutes_held: minutesHeld,
         close_reason: reason || "agent decision",
+        base_mint: pool.lbPair.tokenXMint.toString(),
       });
 
       return {
